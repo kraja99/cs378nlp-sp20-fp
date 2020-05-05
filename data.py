@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import Dataset
 from random import shuffle
 from utils import cuda, load_dataset
+from transformers import BertTokenizer
 
 
 PAD_TOKEN = '[PAD]'
@@ -54,7 +55,7 @@ class Vocabulary:
             (at position 0) and `UNK_TOKEN` (at position 1) are prepended.
         """
         vocab = collections.defaultdict(int)
-        for (_, passage, question, _, _) in samples:
+        for (_, passage, question, _, _, _) in samples:
             for token in itertools.chain(passage, question):
                 vocab[token.lower()] += 1
         top_words = [
@@ -140,8 +141,8 @@ class QADataset(Dataset):
     def __init__(self, args, path):
         self.args = args
         self.meta, self.elems = load_dataset(path)
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
         self.samples = self._create_samples()
-        self.tokenizer = None
         self.batch_size = args.batch_size if 'batch_size' in args else 1
         self.pad_token_id = self.tokenizer.pad_token_id \
             if self.tokenizer is not None else 0
@@ -161,6 +162,16 @@ class QADataset(Dataset):
                 token.lower() for (token, offset) in elem['context_tokens']
             ][:self.args.max_context_length]
 
+            # Construct mapping between original indices and tokenized indices
+            orig_to_tok_index = []
+            tok_to_orig_index = []
+            token_count = 0
+            for i, word in enumerate(passage):
+                orig_to_tok_index.append(token_count)
+                for sub_token in self.tokenizer.tokenize(word):
+                    tok_to_orig_index.append(i)
+                    token_count += 1
+
             # Each passage has several questions associated with it.
             # Additionally, each question has multiple possible answer spans.
             for qa in elem['qas']:
@@ -174,8 +185,12 @@ class QADataset(Dataset):
                 # is inclusive.
                 answers = qa['detected_answers']
                 answer_start, answer_end = answers[0]['token_spans'][0]
+                # Convert answer indices to sub-word indices
+                if answer_start < len(passage) and answer_end < len(passage):
+                    answer_start = orig_to_tok_index[answer_start] + 1
+                    answer_end = orig_to_tok_index[answer_end] + 1
                 samples.append(
-                    (qid, passage, question, answer_start, answer_end)
+                    (qid, passage, question, answer_start, answer_end, tok_to_orig_index)
                 )
                 
         return samples
@@ -205,15 +220,11 @@ class QADataset(Dataset):
         end_positions = []
         for idx in example_idxs:
             # Unpack QA sample and tokenize passage/question.
-            qid, passage, question, answer_start, answer_end = self.samples[idx]
+            qid, passage, question, answer_start, answer_end, _ = self.samples[idx]
 
             # Convert words to tensor.
-            passage_ids = torch.tensor(
-                self.tokenizer.convert_tokens_to_ids(passage)
-            )
-            question_ids = torch.tensor(
-                self.tokenizer.convert_tokens_to_ids(question)
-            )
+            passage_ids = torch.tensor(self.tokenizer.encode_plus(" ".join(passage))["input_ids"])
+            question_ids = torch.tensor(self.tokenizer.encode_plus(" ".join(question))["input_ids"])
             answer_start_ids = torch.tensor(answer_start)
             answer_end_ids = torch.tensor(answer_end)
 

@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from utils import cuda, load_cached_embeddings
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from transformers import BertModel
 
 
 def _sort_batch_by_length(tensor, sequence_lengths):
@@ -174,7 +175,8 @@ class BaselineReader(nn.Module):
         self.pad_token_id = args.pad_token_id
 
         # Initialize embedding layer (1)
-        self.embedding = nn.Embedding(args.vocab_size, args.embedding_dim)
+        self.embedding = BertModel.from_pretrained('bert-base-uncased')
+        # self.embedding = nn.Embedding(args.vocab_size, args.embedding_dim)
 
         # Initialize Context2Query (2)
         self.aligned_att = AlignedAttention(args.embedding_dim)
@@ -281,8 +283,10 @@ class BaselineReader(nn.Module):
         question_lengths = question_mask.long().sum(-1)  # [batch_size]
 
         # 1) Embedding Layer: Embed the passage and question.
-        passage_embeddings = self.embedding(batch['passages'])  # [batch_size, p_len, p_dim]
-        question_embeddings = self.embedding(batch['questions'])  # [batch_size, q_len, q_dim]
+        last_passage_hidden_state = self.embedding(batch['passages'])
+        passage_embeddings = last_passage_hidden_state[0]  # [batch_size, p_len, p_dim]
+        last_question_hidden_state = self.embedding(batch['questions'])
+        question_embeddings = last_question_hidden_state[0]  # [batch_size, q_len, q_dim]
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
         #        each passage word and concatenate with passage embeddings.

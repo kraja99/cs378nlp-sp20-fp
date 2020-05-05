@@ -23,6 +23,7 @@ Author:
 import argparse
 import pprint
 import json
+import time
 
 import torch
 import numpy as np
@@ -167,7 +168,7 @@ parser.add_argument(
 parser.add_argument(
     '--embedding_dim',
     type=int,
-    default=300,
+    default=768,
     help='embedding dimension',
 )
 parser.add_argument(
@@ -260,7 +261,7 @@ def _calculate_loss(
         end_positions: Gold end positions.
 
     Returns:
-        Loss value for a batch of sasmples.
+        Loss value for a batch of samples.
     """
     # If the gold span is outside the scope of the maximum
     # context length, then ignore these indices when computing the loss.
@@ -421,7 +422,7 @@ def write_predictions(args, model, dataset):
             for j in range(start_logits.size(0)):
                 # Find question index and passage.
                 sample_index = args.batch_size * i + j
-                qid, passage, _, _, _ = dataset.samples[sample_index]
+                qid, passage, _, _, _, tok_to_orig_index = dataset.samples[sample_index]
 
                 # Unpack start and end probabilities. Find the constrained
                 # (start, end) pair that has the highest joint probability.
@@ -430,7 +431,9 @@ def write_predictions(args, model, dataset):
                 start_index, end_index = search_span_endpoints(
                         start_probs, end_probs
                 )
-                
+                if (start_index - 1) < len(tok_to_orig_index) and (end_index - 1) < len(tok_to_orig_index):
+                    start_index = tok_to_orig_index[start_index - 1]
+                    end_index = tok_to_orig_index[end_index - 1]
                 # Grab predicted span.
                 pred_span = ' '.join(passage[start_index:(end_index + 1)])
 
@@ -465,13 +468,13 @@ def main(args):
     dev_dataset = QADataset(args, args.dev_path)
 
     # Create vocabulary and tokenizer.
-    vocabulary = Vocabulary(train_dataset.samples, args.vocab_size)
-    tokenizer = Tokenizer(vocabulary)
-    for dataset in (train_dataset, dev_dataset):
-        dataset.register_tokenizer(tokenizer)
-    args.vocab_size = len(vocabulary)
-    args.pad_token_id = tokenizer.pad_token_id
-    print(f'vocab words = {len(vocabulary)}')
+    # vocabulary = Vocabulary(train_dataset.samples, args.vocab_size)
+    # tokenizer = Tokenizer(vocabulary)
+    # for dataset in (train_dataset, dev_dataset):
+    #     dataset.register_tokenizer(tokenizer)
+    # args.vocab_size = len(vocabulary)
+    args.pad_token_id = train_dataset.tokenizer.pad_token_id
+    # print(f'vocab words = {len(vocabulary)}')
 
     # Print number of samples.
     print(f'train samples = {len(train_dataset)}')
@@ -480,16 +483,16 @@ def main(args):
 
     # Select model.
     model = _select_model(args)
-    num_pretrained = model.load_pretrained_embeddings(
-        vocabulary, args.embedding_path
-    )
-    pct_pretrained = round(num_pretrained / len(vocabulary) * 100., 2)
-    print(f'using pre-trained embeddings from \'{args.embedding_path}\'')
-    print(
-        f'initialized {num_pretrained}/{len(vocabulary)} '
-        f'embeddings ({pct_pretrained}%)'
-    )
-    print()
+    # num_pretrained = model.load_pretrained_embeddings(
+    #     vocabulary, args.embedding_path
+    # )
+    # pct_pretrained = round(num_pretrained / len(vocabulary) * 100., 2)
+    # print(f'using pre-trained embeddings from \'{args.embedding_path}\'')
+    # print(
+    #     f'initialized {num_pretrained}/{len(vocabulary)} '
+    #     f'embeddings ({pct_pretrained}%)'
+    # )
+    # print()
 
     if args.use_gpu:
         model = cuda(args, model)
@@ -500,6 +503,7 @@ def main(args):
     print()
 
     if args.do_train:
+        start = time.time()
         # Track training statistics for checkpointing.
         eval_history = []
         best_eval_loss = float('inf')
@@ -533,6 +537,7 @@ def main(args):
                 )
                 print()
                 break
+        print(f'Training Time: {time.time() - start}')
 
     if args.do_test:
         # Write predictions to the output file. Use the printed command
