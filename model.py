@@ -152,8 +152,6 @@ class BertQA(nn.Module):
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1)
         end_logits = end_logits.squeeze(-1)
-        print("Made it through 1 pass!")
-        print(start_logits[10000])
         return start_logits, end_logits
 
 class BaselineReader(nn.Module):
