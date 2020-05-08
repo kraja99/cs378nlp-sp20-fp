@@ -440,7 +440,7 @@ def write_predictions(args, model, dataset):
 
                 # Grab predicted span.
                 if args.model == 'bert':
-                    ids = tokenizer.encode_plus(passage)
+                    ids = tokenizer.encode_plus(" ".join(passage))['input_ids']
                     pred_span = tokenizer.decode(ids[start_index:(end_index + 1)])
                 else:
                     pred_span = ' '.join(passage[start_index:(end_index + 1)])
