@@ -23,6 +23,7 @@ Author:
 import argparse
 import pprint
 import json
+import time
 
 import torch
 import numpy as np
@@ -33,8 +34,9 @@ from tqdm import tqdm
 
 from data import QADataset, Tokenizer, Vocabulary
 
-from model import BaselineReader
+from model import BaselineReader, BertQA
 from utils import cuda, search_span_endpoints, unpack
+from transformers import BertTokenizer
 
 
 _TQDM_BAR_SIZE = 75
@@ -58,7 +60,7 @@ parser.add_argument(
     '--model',
     type=str,
     required=True,
-    choices=['baseline'],
+    choices=['baseline', 'bert'],
     help='which model to use',
 )
 parser.add_argument(
@@ -220,6 +222,8 @@ def _select_model(args):
     """
     if args.model == 'baseline':
         return BaselineReader(args)
+    elif args.model == 'bert':
+        return BertQA(args)
     else:
         raise RuntimeError(f'model \'{args.model}\' not recognized!')
 
@@ -260,7 +264,7 @@ def _calculate_loss(
         end_positions: Gold end positions.
 
     Returns:
-        Loss value for a batch of sasmples.
+        Loss value for a batch of samples.
     """
     # If the gold span is outside the scope of the maximum
     # context length, then ignore these indices when computing the loss.
@@ -409,6 +413,9 @@ def write_predictions(args, model, dataset):
     # Output predictions.
     outputs = []
 
+    if args.model == 'bert':
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
     with torch.no_grad():
         for (i, batch) in enumerate(test_dataloader):
             # Forward inputs.
@@ -430,9 +437,13 @@ def write_predictions(args, model, dataset):
                 start_index, end_index = search_span_endpoints(
                         start_probs, end_probs
                 )
-                
+
                 # Grab predicted span.
-                pred_span = ' '.join(passage[start_index:(end_index + 1)])
+                if args.model == 'bert':
+                    ids = tokenizer.encode_plus(passage)
+                    pred_span = tokenizer.decode(ids[start_index:(end_index + 1)])
+                else:
+                    pred_span = ' '.join(passage[start_index:(end_index + 1)])
 
                 # Add prediction to outputs.
                 outputs.append({'qid': qid, 'answer': pred_span})
@@ -465,13 +476,14 @@ def main(args):
     dev_dataset = QADataset(args, args.dev_path)
 
     # Create vocabulary and tokenizer.
-    vocabulary = Vocabulary(train_dataset.samples, args.vocab_size)
-    tokenizer = Tokenizer(vocabulary)
-    for dataset in (train_dataset, dev_dataset):
-        dataset.register_tokenizer(tokenizer)
-    args.vocab_size = len(vocabulary)
-    args.pad_token_id = tokenizer.pad_token_id
-    print(f'vocab words = {len(vocabulary)}')
+    if args.model != 'bert':
+        vocabulary = Vocabulary(train_dataset.samples, args.vocab_size)
+        tokenizer = Tokenizer(vocabulary)
+        for dataset in (train_dataset, dev_dataset):
+            dataset.register_tokenizer(tokenizer)
+        args.vocab_size = len(vocabulary)
+        args.pad_token_id = tokenizer.pad_token_id
+        print(f'vocab words = {len(vocabulary)}')
 
     # Print number of samples.
     print(f'train samples = {len(train_dataset)}')
@@ -480,16 +492,17 @@ def main(args):
 
     # Select model.
     model = _select_model(args)
-    num_pretrained = model.load_pretrained_embeddings(
-        vocabulary, args.embedding_path
-    )
-    pct_pretrained = round(num_pretrained / len(vocabulary) * 100., 2)
-    print(f'using pre-trained embeddings from \'{args.embedding_path}\'')
-    print(
-        f'initialized {num_pretrained}/{len(vocabulary)} '
-        f'embeddings ({pct_pretrained}%)'
-    )
-    print()
+    if args.model != 'bert':
+        num_pretrained = model.load_pretrained_embeddings(
+            vocabulary, args.embedding_path
+        )
+        pct_pretrained = round(num_pretrained / len(vocabulary) * 100., 2)
+        print(f'using pre-trained embeddings from \'{args.embedding_path}\'')
+        print(
+            f'initialized {num_pretrained}/{len(vocabulary)} '
+            f'embeddings ({pct_pretrained}%)'
+        )
+        print()
 
     if args.use_gpu:
         model = cuda(args, model)
@@ -500,6 +513,7 @@ def main(args):
     print()
 
     if args.do_train:
+        start = time.time()
         # Track training statistics for checkpointing.
         eval_history = []
         best_eval_loss = float('inf')
@@ -533,6 +547,7 @@ def main(args):
                 )
                 print()
                 break
+        print(f'Training Time: {time.time() - start}')
 
     if args.do_test:
         # Write predictions to the output file. Use the printed command

@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import Dataset
 from random import shuffle
 from utils import cuda, load_dataset
+from transformers import BertTokenizer
 
 
 PAD_TOKEN = '[PAD]'
@@ -140,8 +141,11 @@ class QADataset(Dataset):
     def __init__(self, args, path):
         self.args = args
         self.meta, self.elems = load_dataset(path)
+        if args.model == 'bert':
+            self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        else:
+            self.tokenizer = None
         self.samples = self._create_samples()
-        self.tokenizer = None
         self.batch_size = args.batch_size if 'batch_size' in args else 1
         self.pad_token_id = self.tokenizer.pad_token_id \
             if self.tokenizer is not None else 0
@@ -161,6 +165,12 @@ class QADataset(Dataset):
                 token.lower() for (token, offset) in elem['context_tokens']
             ][:self.args.max_context_length]
 
+            orig_to_tok_index = []
+            token_count = 0
+            for i, word in enumerate(passage):
+                orig_to_tok_index.append(token_count)
+                token_count += len(self.tokenizer.tokenize(word))
+
             # Each passage has several questions associated with it.
             # Additionally, each question has multiple possible answer spans.
             for qa in elem['qas']:
@@ -174,6 +184,11 @@ class QADataset(Dataset):
                 # is inclusive.
                 answers = qa['detected_answers']
                 answer_start, answer_end = answers[0]['token_spans'][0]
+
+                if answer_start < len(passage) and answer_end < len(passage):
+                    answer_start = orig_to_tok_index[answer_start] + 1
+                    answer_end = orig_to_tok_index[answer_end] + 1
+
                 samples.append(
                     (qid, passage, question, answer_start, answer_end)
                 )
@@ -199,8 +214,10 @@ class QADataset(Dataset):
         if shuffle_examples:
             shuffle(example_idxs)
 
-        passages = []
-        questions = []
+        # passages = []
+        # questions = []
+        input_ids = []
+        token_type_ids = []
         start_positions = []
         end_positions = []
         for idx in example_idxs:
@@ -208,22 +225,27 @@ class QADataset(Dataset):
             qid, passage, question, answer_start, answer_end = self.samples[idx]
 
             # Convert words to tensor.
-            passage_ids = torch.tensor(
-                self.tokenizer.convert_tokens_to_ids(passage)
-            )
-            question_ids = torch.tensor(
-                self.tokenizer.convert_tokens_to_ids(question)
-            )
+            encodings = self.tokenizer.encode_plus(" ".join(passage), " ".join(question), max_length=512,
+                                                   pad_to_max_length=True, return_token_type_ids=True)
+
+            # passage_ids = torch.tensor(
+            #     self.tokenizer.convert_tokens_to_ids(passage)
+            # )
+            # question_ids = torch.tensor(
+            #     self.tokenizer.convert_tokens_to_ids(question)
+            # )
             answer_start_ids = torch.tensor(answer_start)
             answer_end_ids = torch.tensor(answer_end)
 
             # Store each part in an independent list.
-            passages.append(passage_ids)
-            questions.append(question_ids)
+            # passages.append(passage_ids)
+            # questions.append(question_ids)
+            input_ids.append(torch.tensor(encodings['input_ids']))
+            token_type_ids.append(torch.tensor(encodings['token_type_ids']))
             start_positions.append(answer_start_ids)
             end_positions.append(answer_end_ids)
 
-        return zip(passages, questions, start_positions, end_positions)
+        return zip(input_ids, token_type_ids, start_positions, end_positions)
 
     def _create_batches(self, generator, batch_size):
         """
@@ -254,39 +276,47 @@ class QADataset(Dataset):
             if no_more_data and bsz == 0:
                 break
 
-            passages = []
-            questions = []
+            # passages = []
+            # questions = []
+            input_ids = []
+            token_type_ids = []
             start_positions = torch.zeros(bsz)
             end_positions = torch.zeros(bsz)
             max_passage_length = 0
             max_question_length = 0
             # Check max lengths for both passages and questions
             for ii in range(bsz):
-                passages.append(current_batch[ii][0])
-                questions.append(current_batch[ii][1])
+                # passages.append(current_batch[ii][0])
+                # questions.append(current_batch[ii][1])
+                input_ids.append(current_batch[ii][0])
+                token_type_ids.append(current_batch[ii][1])
                 start_positions[ii] = current_batch[ii][2]
                 end_positions[ii] = current_batch[ii][3]
-                max_passage_length = max(
-                    max_passage_length, len(current_batch[ii][0])
-                )
-                max_question_length = max(
-                    max_question_length, len(current_batch[ii][1])
-                )
+                # max_passage_length = max(
+                #     max_passage_length, len(current_batch[ii][0])
+                # )
+                # max_question_length = max(
+                #     max_question_length, len(current_batch[ii][1])
+                # )
 
             # Assume pad token index is 0. Need to change here if pad token
             # index is other than 0.
-            padded_passages = torch.zeros(bsz, max_passage_length)
-            padded_questions = torch.zeros(bsz, max_question_length)
-            # Pad passages and questions
-            for iii, passage_question in enumerate(zip(passages, questions)):
-                passage, question = passage_question
-                padded_passages[iii][:len(passage)] = passage
-                padded_questions[iii][:len(question)] = question
+            # padded_passages = torch.zeros(bsz, max_passage_length)
+            # padded_questions = torch.zeros(bsz, max_question_length)
+            p_inputs = torch.zeros(bsz, 512)
+            p_tokens = torch.zeros(bsz, 512)
+            # # Pad passages and questions
+            for iii, input_token in enumerate(zip(input_ids, token_type_ids)):
+                input_id, token_type_id = input_token
+                p_inputs[iii][:len(input_id)] = input_id
+                p_tokens[iii][:len(token_type_id)] = token_type_id
 
             # Create an input dictionary
             batch_dict = {
-                'passages': cuda(self.args, padded_passages).long(),
-                'questions': cuda(self.args, padded_questions).long(),
+                # 'passages': cuda(self.args, padded_passages).long(),
+                # 'questions': cuda(self.args, padded_questions).long(),
+                'input_ids': cuda(self.args, p_inputs).long(),
+                'token_type_ids': cuda(self.args, p_tokens).long(),
                 'start_positions': cuda(self.args, start_positions).long(),
                 'end_positions': cuda(self.args, end_positions).long()
             }

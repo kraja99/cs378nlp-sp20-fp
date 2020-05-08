@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 from utils import cuda, load_cached_embeddings
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-
+from transformers import BertModel
 
 def _sort_batch_by_length(tensor, sequence_lengths):
     """
@@ -134,6 +134,27 @@ class BilinearOutput(nn.Module):
         p_scores.data.masked_fill_(p_mask.data, -float('inf'))
         return p_scores  # [batch_size, p_len]
 
+
+class BertQA(nn.Module):
+
+    def __init__(self, args):
+        super().__init__()
+
+        self.args = args
+        self.bert = BertModel.from_pretrained('bert-base-uncased')
+        self.output = nn.Linear(768, 2)
+        nn.init.xavier_uniform_(self.output.weight)
+
+    def forward(self, batch):
+        outputs = self.bert(input_ids=batch['input_ids'], token_type_ids=batch['token_type_ids'])
+        last_hidden_layer = outputs[0]
+        logits = self.output(last_hidden_layer)
+        start_logits, end_logits = logits.split(1, dim=-1)
+        start_logits = start_logits.squeeze(-1)
+        end_logits = end_logits.squeeze(-1)
+        print("Made it through 1 pass!")
+        print(start_logits[10000])
+        return start_logits, end_logits
 
 class BaselineReader(nn.Module):
     """
