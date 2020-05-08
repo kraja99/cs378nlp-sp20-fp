@@ -428,7 +428,7 @@ def write_predictions(args, model, dataset):
             for j in range(start_logits.size(0)):
                 # Find question index and passage.
                 sample_index = args.batch_size * i + j
-                qid, passage, _, _, _ = dataset.samples[sample_index]
+                qid, passage, _, _, _, tok_to_orig_index = dataset.samples[sample_index]
 
                 # Unpack start and end probabilities. Find the constrained
                 # (start, end) pair that has the highest joint probability.
@@ -440,10 +440,10 @@ def write_predictions(args, model, dataset):
 
                 # Grab predicted span.
                 if args.model == 'bert':
-                    ids = tokenizer.encode_plus(" ".join(passage))['input_ids']
-                    pred_span = tokenizer.decode(ids[start_index:(end_index + 1)])
-                else:
-                    pred_span = ' '.join(passage[start_index:(end_index + 1)])
+                    if (start_index - 1) < len(tok_to_orig_index) and (end_index - 1) < len(tok_to_orig_index):
+                        start_index = tok_to_orig_index[start_index - 1]
+                        end_index = tok_to_orig_index[end_index - 1]
+                pred_span = ' '.join(passage[start_index:(end_index + 1)])
 
                 # Add prediction to outputs.
                 outputs.append({'qid': qid, 'answer': pred_span})
@@ -530,7 +530,7 @@ def main(args):
             if eval_loss < best_eval_loss:
                 best_eval_loss = eval_loss
                 torch.save(model.state_dict(), args.model_path)
-            
+
             print(
                 f'epoch = {epoch} | '
                 f'train loss = {train_loss:.6f} | '

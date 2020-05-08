@@ -55,7 +55,7 @@ class Vocabulary:
             (at position 0) and `UNK_TOKEN` (at position 1) are prepended.
         """
         vocab = collections.defaultdict(int)
-        for (_, passage, question, _, _) in samples:
+        for (_, passage, question, _, _, _) in samples:
             for token in itertools.chain(passage, question):
                 vocab[token.lower()] += 1
         top_words = [
@@ -166,10 +166,13 @@ class QADataset(Dataset):
             ][:self.args.max_context_length]
 
             orig_to_tok_index = []
-            token_count = 0
+            tok_to_orig_index = []
+            all_tokens = []
             for i, word in enumerate(passage):
-                orig_to_tok_index.append(token_count)
-                token_count += len(self.tokenizer.tokenize(word))
+                orig_to_tok_index.append(len(all_tokens))
+                for sub_word in self.tokenizer.tokenize(word):
+                    all_tokens.append(sub_word)
+                    tok_to_orig_index.append(i)
 
             # Each passage has several questions associated with it.
             # Additionally, each question has multiple possible answer spans.
@@ -184,13 +187,11 @@ class QADataset(Dataset):
                 # is inclusive.
                 answers = qa['detected_answers']
                 answer_start, answer_end = answers[0]['token_spans'][0]
-
                 if answer_start < len(passage) and answer_end < len(passage):
                     answer_start = orig_to_tok_index[answer_start] + 1
                     answer_end = orig_to_tok_index[answer_end] + 1
-
                 samples.append(
-                    (qid, passage, question, answer_start, answer_end)
+                    (qid, passage, question, answer_start, answer_end, tok_to_orig_index)
                 )
                 
         return samples
@@ -222,7 +223,7 @@ class QADataset(Dataset):
         end_positions = []
         for idx in example_idxs:
             # Unpack QA sample and tokenize passage/question.
-            qid, passage, question, answer_start, answer_end = self.samples[idx]
+            qid, passage, question, answer_start, answer_end, _ = self.samples[idx]
 
             # Convert words to tensor.
             encodings = self.tokenizer.encode_plus(" ".join(passage), " ".join(question), max_length=512,
