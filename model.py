@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 from utils import cuda, load_cached_embeddings
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from transformers import BertModel
+from transformers import BertModel, BertConfig
 
 def _sort_batch_by_length(tensor, sequence_lengths):
     """
@@ -141,14 +141,16 @@ class BertQA(nn.Module):
         super().__init__()
 
         self.args = args
-        self.bert = BertModel.from_pretrained('bert-base-uncased')
+        config = BertConfig.from_pretrained('bert-base-uncased', output_hidden_states=True)
+        self.bert = BertModel.from_pretrained('bert-base-uncased', config=config)
         self.output = nn.Linear(768, 2)
         nn.init.xavier_uniform_(self.output.weight)
 
     def forward(self, batch):
         outputs = self.bert(input_ids=batch['input_ids'], token_type_ids=batch['token_type_ids'])
-        last_hidden_layer = outputs[0]
-        logits = self.output(last_hidden_layer)
+        # bert_output = outputs[0]  # using last hidden layer
+        bert_output = outputs[2][11]  # using 2nd to last hidden layer
+        logits = self.output(bert_output)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1)
         end_logits = end_logits.squeeze(-1)
