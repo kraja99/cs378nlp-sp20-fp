@@ -143,14 +143,16 @@ class BertQA(nn.Module):
         self.args = args
         config = BertConfig.from_pretrained('bert-base-uncased', output_hidden_states=True)
         self.bert = BertModel.from_pretrained('bert-base-uncased', config=config)
-        self.output = nn.Linear(768, 2)
+        # self.output = nn.Linear(768, 2)
+        self.output = nn.Linear(3072, 2)  # for logits from concatenating bert output
         nn.init.xavier_uniform_(self.output.weight)
 
     def forward(self, batch):
         outputs = self.bert(input_ids=batch['input_ids'], token_type_ids=batch['token_type_ids'])
         # bert_output = outputs[0]  # using last hidden layer
         # bert_output = outputs[2][11]  # using 2nd to last hidden layer
-        bert_output = outputs[2][12] + outputs[2][11] + outputs[2][10] + outputs[2][9]  # using sum of last 4 layers
+        # bert_output = outputs[2][12] + outputs[2][11] + outputs[2][10] + outputs[2][9]  # using sum of last 4 layers
+        bert_output = torch.cat((outputs[2][12], outputs[2][11], outputs[2][10], outputs[2][9]), -1)  # concatenating last 4 layers
         logits = self.output(bert_output)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1)
